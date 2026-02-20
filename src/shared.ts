@@ -23,33 +23,14 @@ export type Message =
 	| {
 			type: "all";
 			messages: ChatMessage[];
+	  }
+	| {
+			type: "room_expired";
 	  };
 
-export const names = [
-	"Alice",
-	"Bob",
-	"Charlie",
-	"David",
-	"Eve",
-	"Frank",
-	"Grace",
-	"Heidi",
-	"Ivan",
-	"Judy",
-	"Kevin",
-	"Linda",
-	"Mallory",
-	"Nancy",
-	"Oscar",
-	"Peggy",
-	"Quentin",
-	"Randy",
-	"Steve",
-	"Trent",
-	"Ursula",
-	"Victor",
-	"Walter",
-	"Xavier",
-	"Yvonne",
-	"Zoe",
-];
+export type RoomInfo = {
+	id: string;
+	name: string;
+	createdAt: number;
+	expiresAt: number;
+};
