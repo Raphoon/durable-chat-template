@@ -237,6 +237,17 @@ function ChatPage() {
 
 	const [nickname] = useState(() => localStorage.getItem(NICKNAME_KEY) ?? "");
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
+	const [roomName, setRoomName] = useState<string>("");
+
+	useEffect(() => {
+		fetch("/api/rooms")
+			.then((r) => r.json())
+			.then((rooms: RoomInfo[]) => {
+				const found = rooms.find((r) => r.id === roomId);
+				if (found) setRoomName(found.name);
+			})
+			.catch(() => {});
+	}, [roomId]);
 
 	useEffect(() => {
 		if (!nickname.trim()) navigate("/", { replace: true });
@@ -296,7 +307,7 @@ function ChatPage() {
 					방 목록
 				</button>
 				<div className="chat-header-info">
-					<div className="chat-header-room">{roomId}</div>
+					<div className="chat-header-room">{roomName || roomId}</div>
 				</div>
 				<span className="nickname-chip">
 					<span className="nickname-chip-dot" />
