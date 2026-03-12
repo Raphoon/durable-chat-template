@@ -341,6 +341,29 @@ body, html {
 .room-item-meta {
   font-size: 12px;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.room-item-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #16a34a;
+  font-weight: 500;
+}
+
+.room-item-count-dot {
+  width: 6px;
+  height: 6px;
+  background: #16a34a;
+  border-radius: 50%;
+}
+
+.room-item-sep {
+  color: var(--border);
 }
 
 /* ─── Section divider ─── */

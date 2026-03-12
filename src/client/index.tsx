@@ -162,7 +162,14 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 								<div key={room.id} className="room-item">
 									<div className="room-item-info">
 										<span className="room-item-name">{room.name}</span>
-										<span className="room-item-meta">{formatExpiry(room.expiresAt)}</span>
+										<span className="room-item-meta">
+											<span className="room-item-count">
+												<span className="room-item-count-dot" />
+												{room.count}명 접속 중
+											</span>
+											<span className="room-item-sep"> · </span>
+											{formatExpiry(room.expiresAt)}
+										</span>
 									</div>
 									<button
 										className="btn btn--sm btn--join"

@@ -6,7 +6,7 @@ import {
 	routePartykitRequest,
 } from "partyserver";
 
-import type { ChatMessage, Message } from "../shared";
+import type { ChatMessage, Message, RoomInfo } from "../shared";
 import { RoomRegistry } from "./room-registry";
 
 export { RoomRegistry };
@@ -116,6 +116,11 @@ export class Chat extends Server<Env> {
 		);
 	}
 
+	onRequest(_request: Request): Response {
+		const count = [...this.getConnections()].length;
+		return Response.json({ count });
+	}
+
 	onMessage(connection: Connection, message: WSMessage) {
 		this.broadcast(message);
 
@@ -160,9 +165,30 @@ export default {
 		if (url.pathname.startsWith("/api/rooms")) {
 			const registryId = env.RoomRegistry.idFromName("global");
 			const registryStub = env.RoomRegistry.get(registryId);
-			// Strip /api prefix so the DO sees /rooms[/id]
 			const registryUrl = new URL(request.url);
 			registryUrl.pathname = url.pathname.replace("/api", "");
+
+			// For GET /api/rooms, enrich each room with live connection count
+			if (request.method === "GET" && url.pathname === "/api/rooms") {
+				const roomsRes = await registryStub.fetch(new Request(registryUrl.toString(), request));
+				const rooms: RoomInfo[] = await roomsRes.json();
+
+				const withCounts = await Promise.all(
+					rooms.map(async (room) => {
+						try {
+							const stub = env.Chat.get(env.Chat.idFromName(room.id));
+							const res = await stub.fetch(new Request(`http://internal/${room.id}`));
+							const { count } = await res.json<{ count: number }>();
+							return { ...room, count };
+						} catch {
+							return { ...room, count: 0 };
+						}
+					}),
+				);
+
+				return Response.json(withCounts);
+			}
+
 			return registryStub.fetch(new Request(registryUrl.toString(), request));
 		}
 

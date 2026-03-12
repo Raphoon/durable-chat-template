@@ -33,4 +33,5 @@ export type RoomInfo = {
 	name: string;
 	createdAt: number;
 	expiresAt: number;
+	count: number;
 };
