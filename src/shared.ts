@@ -5,6 +5,12 @@ export type ChatMessage = {
 	role: "user" | "assistant";
 };
 
+export type Participant = {
+	id: string;
+	nickname: string;
+	joinedAt: number;
+};
+
 export type Message =
 	| {
 			type: "add";
@@ -26,12 +32,16 @@ export type Message =
 	  }
 	| {
 			type: "room_expired";
+	  }
+	| {
+			type: "presence_sync";
+			participants: Participant[];
 	  };
 
 export type RoomInfo = {
 	id: string;
 	name: string;
 	createdAt: number;
-	expiresAt: number;
 	count: number;
+	idleExpiresAt: number | null;
 };

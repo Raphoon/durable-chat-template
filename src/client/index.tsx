@@ -89,7 +89,18 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 	useEffect(() => {
 		fetchRooms();
 		const interval = setInterval(fetchRooms, 30_000);
-		return () => clearInterval(interval);
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === "visible") {
+				fetchRooms();
+			}
+		};
+		window.addEventListener("focus", fetchRooms);
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+		return () => {
+			clearInterval(interval);
+			window.removeEventListener("focus", fetchRooms);
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+		};
 	}, []);
 
 	async function fetchRooms() {
@@ -121,13 +132,17 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 		}
 	}
 
-	function formatExpiry(expiresAt: number) {
-		const diff = expiresAt - Date.now();
-		if (diff <= 0) return "만료됨";
-		const m = Math.floor(diff / 60000);
-		const h = Math.floor(m / 60);
-		if (h > 0) return `${h}시간 ${m % 60}분 후 만료`;
-		return `${m}분 후 만료`;
+	function formatIdleExpiry(idleExpiresAt: number | null) {
+		if (!idleExpiresAt) return "";
+		const diff = idleExpiresAt - Date.now();
+		if (diff <= 0) return "곧 만료";
+		const totalMinutes = Math.ceil(diff / 60000);
+		const hours = Math.floor(totalMinutes / 60);
+		const minutes = totalMinutes % 60;
+		if (hours > 0) {
+			return `${hours}시간 ${minutes}분 후 만료`;
+		}
+		return `${totalMinutes}분 후 만료`;
 	}
 
 	return (
@@ -163,12 +178,19 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 									<div className="room-item-info">
 										<span className="room-item-name">{room.name}</span>
 										<span className="room-item-meta">
-											<span className="room-item-count">
-												<span className="room-item-count-dot" />
-												{room.count}명 접속 중
-											</span>
-											<span className="room-item-sep"> · </span>
-											{formatExpiry(room.expiresAt)}
+											{room.count > 0 ? (
+												<span className="room-item-count">
+													<span className="room-item-count-dot" />
+													{room.count}명 접속 중
+												</span>
+											) : (
+												<span
+													className="room-item-count"
+													style={{ color: "#8b95a7" }}
+												>
+													참여자 없음 · {formatIdleExpiry(room.idleExpiresAt)}
+												</span>
+											)}
 										</span>
 									</div>
 									<button
