@@ -96,14 +96,31 @@ export class Chat extends Server<Env> {
 
 	async onStart() {
 		this.ctx.storage.sql.exec(
-			`CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, user TEXT, role TEXT, content TEXT)`,
+			`CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, user TEXT, role TEXT, content TEXT, createdAt INTEGER NOT NULL)`,
 		);
+
+		const messageColumns = this.ctx.storage.sql
+			.exec(`PRAGMA table_info(messages)`)
+			.toArray() as { name: string }[];
+		if (!messageColumns.some((column) => column.name === "createdAt")) {
+			this.ctx.storage.sql.exec(
+				`ALTER TABLE messages ADD COLUMN createdAt INTEGER NOT NULL DEFAULT 0`,
+			);
+		}
 		this.ctx.storage.sql.exec(
 			`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
 		);
 		this.messages = this.ctx.storage.sql
-			.exec(`SELECT * FROM messages`)
-			.toArray() as ChatMessage[];
+			.exec(`SELECT id, user, role, content, createdAt FROM messages`)
+			.toArray()
+			.map((row) => {
+				const message = row as ChatMessage;
+				const createdAt = Number(message.createdAt);
+				return {
+					...message,
+					createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : Date.now(),
+				};
+			});
 
 		// idle 카운트다운이 진행 중이었다면 만료 여부 확인 후 알람 복원
 		const idleSinceRows = this.ctx.storage.sql
@@ -205,12 +222,17 @@ export class Chat extends Server<Env> {
 			this.messages.push(message);
 		}
 		this.ctx.storage.sql.exec(
-			`INSERT INTO messages (id, user, role, content) VALUES (?, ?, ?, ?)
-			 ON CONFLICT (id) DO UPDATE SET content = excluded.content`,
+			`INSERT INTO messages (id, user, role, content, createdAt) VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT (id) DO UPDATE SET
+			 	content = excluded.content,
+			 	user = excluded.user,
+			 	role = excluded.role,
+			 	createdAt = excluded.createdAt`,
 			message.id,
 			message.user,
 			message.role,
 			message.content,
+			message.createdAt,
 		);
 	}
 
@@ -220,11 +242,25 @@ export class Chat extends Server<Env> {
 	}
 
 	onMessage(connection: Connection, message: WSMessage) {
-		this.broadcast(message);
 		const parsed = JSON.parse(message as string) as Message;
 		if (parsed.type === "add" || parsed.type === "update") {
-			this.saveMessage(parsed);
+			const normalizedCreatedAt = Number(parsed.createdAt);
+			const normalized: ChatMessage = {
+				id: parsed.id,
+				content: parsed.content,
+				user: parsed.user,
+				role: parsed.role,
+				createdAt:
+					Number.isFinite(normalizedCreatedAt) && normalizedCreatedAt > 0
+						? normalizedCreatedAt
+						: Date.now(),
+			};
+			this.broadcastMessage({ type: parsed.type, ...normalized });
+			this.saveMessage(normalized);
+			return;
 		}
+
+		this.broadcast(message);
 	}
 
 	async onClose(_connection: Connection) {

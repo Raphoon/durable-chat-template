@@ -3,6 +3,7 @@ export type ChatMessage = {
 	content: string;
 	user: string;
 	role: "user" | "assistant";
+	createdAt: number;
 };
 
 export type Participant = {
@@ -18,6 +19,7 @@ export type Message =
 			content: string;
 			user: string;
 			role: "user" | "assistant";
+			createdAt: number;
 	  }
 	| {
 			type: "update";
@@ -25,6 +27,7 @@ export type Message =
 			content: string;
 			user: string;
 			role: "user" | "assistant";
+			createdAt: number;
 	  }
 	| {
 			type: "all";

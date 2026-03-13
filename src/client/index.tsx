@@ -22,6 +22,11 @@ import {
 const NICKNAME_KEY = "chat_nickname";
 const CURRENT_ROOM_KEY = "chat_current_room";
 const CLIENT_ID_KEY = "chat_client_id";
+const messageTimeFormatter = new Intl.DateTimeFormat("ko-KR", {
+	hour: "2-digit",
+	minute: "2-digit",
+	hour12: true,
+});
 
 function getRoomIdFromPath(pathname: string): string | null {
 	const match = pathname.match(/^\/room\/([^/]+)$/);
@@ -34,6 +39,18 @@ function getOrCreateClientId(): string {
 	const next = nanoid(12);
 	localStorage.setItem(CLIENT_ID_KEY, next);
 	return next;
+}
+
+function formatMessageTime(createdAt: number): string {
+	const timestamp = Number(createdAt);
+	if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
+	return messageTimeFormatter.format(timestamp);
+}
+
+function getMessageMinuteKey(createdAt: number): number {
+	const timestamp = Number(createdAt);
+	if (!Number.isFinite(timestamp) || timestamp <= 0) return -1;
+	return Math.floor(timestamp / 60000);
 }
 
 // ─── Icons ────────────────────────────────────────────────────
@@ -362,11 +379,13 @@ function ChatPage() {
 		const input = e.currentTarget.elements.namedItem("content") as HTMLInputElement;
 		const text = input.value.trim();
 		if (!text) return;
+		const now = Date.now();
 		const chatMessage: ChatMessage = {
 			id: nanoid(8),
 			content: text,
 			user: nickname,
 			role: "user",
+			createdAt: now,
 		};
 		setMessages((prev) => [...prev, chatMessage]);
 		socket.send(JSON.stringify({ type: "add", ...chatMessage } satisfies Message));
@@ -412,18 +431,35 @@ function ChatPage() {
 
 				<div className="chat-main">
 					<div className="chat-messages">
-						{messages.map((message) => {
+						{messages.map((message, index) => {
 							const isMine = message.user === nickname;
+							const prev = messages[index - 1];
+							const next = messages[index + 1];
+							const shouldShowTime =
+								!next ||
+								next.user !== message.user ||
+								getMessageMinuteKey(next.createdAt) !==
+									getMessageMinuteKey(message.createdAt);
+							const shouldShowSender =
+								!isMine && (!prev || prev.user !== message.user);
 							return (
 								<div
 									key={message.id}
 									className={`message-item ${isMine ? "message-item--mine" : "message-item--other"}`}
 								>
-									{!isMine && (
+									{shouldShowSender && (
 										<span className="message-sender">{message.user}</span>
 									)}
-									<div className={`message-bubble ${isMine ? "message-bubble--mine" : "message-bubble--other"}`}>
-										{message.content}
+									<div className="message-line">
+										{isMine && shouldShowTime && (
+											<span className="message-time">{formatMessageTime(message.createdAt)}</span>
+										)}
+										<div className={`message-bubble ${isMine ? "message-bubble--mine" : "message-bubble--other"}`}>
+											{message.content}
+										</div>
+										{!isMine && shouldShowTime && (
+											<span className="message-time">{formatMessageTime(message.createdAt)}</span>
+										)}
 									</div>
 								</div>
 							);

@@ -561,6 +561,19 @@ body, html {
   box-shadow: var(--shadow-sm);
 }
 
+.message-line {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.message-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .chat-input-area {
   background: var(--card-bg);
   border-top: 1px solid var(--border);
