@@ -8,12 +8,33 @@ import {
 	Navigate,
 	useParams,
 	useNavigate,
+	useLocation,
 } from "react-router";
 import { nanoid } from "nanoid";
 
-import { type ChatMessage, type Message, type RoomInfo } from "../shared";
+import {
+	type ChatMessage,
+	type Message,
+	type Participant,
+	type RoomInfo,
+} from "../shared";
 
 const NICKNAME_KEY = "chat_nickname";
+const CURRENT_ROOM_KEY = "chat_current_room";
+const CLIENT_ID_KEY = "chat_client_id";
+
+function getRoomIdFromPath(pathname: string): string | null {
+	const match = pathname.match(/^\/room\/([^/]+)$/);
+	return match?.[1] ?? null;
+}
+
+function getOrCreateClientId(): string {
+	const existing = localStorage.getItem(CLIENT_ID_KEY)?.trim();
+	if (existing) return existing;
+	const next = nanoid(12);
+	localStorage.setItem(CLIENT_ID_KEY, next);
+	return next;
+}
 
 // ─── Icons ────────────────────────────────────────────────────
 
@@ -241,12 +262,22 @@ function HomePage() {
 		() => localStorage.getItem(NICKNAME_KEY) ?? "",
 	);
 
+	useEffect(() => {
+		function handleStorage(event: StorageEvent) {
+			if (event.key !== NICKNAME_KEY) return;
+			setNickname(event.newValue ?? "");
+		}
+		window.addEventListener("storage", handleStorage);
+		return () => window.removeEventListener("storage", handleStorage);
+	}, []);
+
 	function handleSave(name: string) {
 		setNickname(name);
 	}
 
 	function handleChangeNickname() {
 		localStorage.removeItem(NICKNAME_KEY);
+		localStorage.removeItem(CURRENT_ROOM_KEY);
 		setNickname("");
 	}
 
@@ -265,8 +296,15 @@ function ChatPage() {
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 
 	const [nickname] = useState(() => localStorage.getItem(NICKNAME_KEY) ?? "");
+	const [clientId] = useState(() => getOrCreateClientId());
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
+	const [participants, setParticipants] = useState<Participant[]>([]);
 	const [roomName, setRoomName] = useState<string>("");
+
+	useEffect(() => {
+		if (!roomId) return;
+		localStorage.setItem(CURRENT_ROOM_KEY, roomId);
+	}, [roomId]);
 
 	useEffect(() => {
 		fetch("/api/rooms")
@@ -289,10 +327,15 @@ function ChatPage() {
 	const socket = usePartySocket({
 		party: "chat",
 		room: roomId,
+		query: {
+			nickname,
+			clientId,
+		},
 		onMessage: (evt) => {
 			const message = JSON.parse(evt.data as string) as Message;
 
 			if (message.type === "room_expired") {
+				localStorage.removeItem(CURRENT_ROOM_KEY);
 				navigate("/", { replace: true });
 				return;
 			}
@@ -308,6 +351,8 @@ function ChatPage() {
 				);
 			} else if (message.type === "all") {
 				setMessages(message.messages);
+			} else if (message.type === "presence_sync") {
+				setParticipants(message.participants);
 			}
 		},
 	});
@@ -328,10 +373,15 @@ function ChatPage() {
 		input.value = "";
 	}
 
+	function handleBackToRooms() {
+		localStorage.removeItem(CURRENT_ROOM_KEY);
+		navigate("/");
+	}
+
 	return (
 		<div className="chat-page">
 			<header className="chat-header">
-				<button className="chat-header-back" onClick={() => navigate("/")}>
+				<button className="chat-header-back" onClick={handleBackToRooms}>
 					<ArrowLeftIcon />
 					방 목록
 				</button>
@@ -344,41 +394,121 @@ function ChatPage() {
 				</span>
 			</header>
 
-			<div className="chat-messages">
-				{messages.map((message) => {
-					const isMine = message.user === nickname;
-					return (
-						<div
-							key={message.id}
-							className={`message-item ${isMine ? "message-item--mine" : "message-item--other"}`}
-						>
-							{!isMine && (
-								<span className="message-sender">{message.user}</span>
-							)}
-							<div className={`message-bubble ${isMine ? "message-bubble--mine" : "message-bubble--other"}`}>
-								{message.content}
+			<div className="chat-content">
+				<aside className="participants-panel">
+					<div className="participants-title">참여자 {participants.length}명</div>
+					<div className="participants-list">
+						{participants.map((participant) => (
+							<div
+								key={participant.id}
+								className={`participants-item ${participant.id === clientId ? "participants-item--me" : ""}`}
+							>
+								<span className={`participants-item-dot ${participant.id === clientId ? "participants-item-dot--me" : ""}`} />
+								{participant.nickname}
 							</div>
-						</div>
-					);
-				})}
-				<div ref={messagesEndRef} />
-			</div>
+						))}
+					</div>
+				</aside>
 
-			<div className="chat-input-area">
-				<form className="chat-input-row" onSubmit={handleSend}>
-					<input
-						type="text"
-						name="content"
-						className="input"
-						placeholder="메시지를 입력하세요…"
-						autoComplete="off"
-					/>
-					<button type="submit" className="chat-send-btn">
-						전송
-					</button>
-				</form>
+				<div className="chat-main">
+					<div className="chat-messages">
+						{messages.map((message) => {
+							const isMine = message.user === nickname;
+							return (
+								<div
+									key={message.id}
+									className={`message-item ${isMine ? "message-item--mine" : "message-item--other"}`}
+								>
+									{!isMine && (
+										<span className="message-sender">{message.user}</span>
+									)}
+									<div className={`message-bubble ${isMine ? "message-bubble--mine" : "message-bubble--other"}`}>
+										{message.content}
+									</div>
+								</div>
+							);
+						})}
+						<div ref={messagesEndRef} />
+					</div>
+
+					<div className="chat-input-area">
+						<form className="chat-input-row" onSubmit={handleSend}>
+							<input
+								type="text"
+								name="content"
+								className="input"
+								placeholder="메시지를 입력하세요…"
+								autoComplete="off"
+							/>
+							<button type="submit" className="chat-send-btn">
+								전송
+							</button>
+						</form>
+					</div>
+				</div>
 			</div>
 		</div>
+	);
+}
+
+function CrossTabRoomSync() {
+	const navigate = useNavigate();
+	const location = useLocation();
+	const previousRoomIdRef = useRef<string | null>(null);
+
+	useEffect(() => {
+		const roomId = getRoomIdFromPath(location.pathname);
+		const storedRoomId = localStorage.getItem(CURRENT_ROOM_KEY);
+		if (roomId) {
+			if (storedRoomId !== roomId) {
+				localStorage.setItem(CURRENT_ROOM_KEY, roomId);
+			}
+		} else if (storedRoomId) {
+			if (previousRoomIdRef.current === storedRoomId) {
+				localStorage.removeItem(CURRENT_ROOM_KEY);
+			} else {
+				navigate(`/room/${storedRoomId}`, { replace: true });
+			}
+		}
+
+		previousRoomIdRef.current = roomId;
+	}, [location.pathname, navigate]);
+
+	useEffect(() => {
+		function handleStorage(event: StorageEvent) {
+			if (event.key !== CURRENT_ROOM_KEY) return;
+			const nextRoomId = event.newValue?.trim() ?? "";
+			const currentRoomId = getRoomIdFromPath(location.pathname);
+
+			if (nextRoomId) {
+				if (currentRoomId !== nextRoomId) {
+					navigate(`/room/${nextRoomId}`, { replace: true });
+				}
+				return;
+			}
+
+			if (currentRoomId) {
+				navigate("/", { replace: true });
+			}
+		}
+
+		window.addEventListener("storage", handleStorage);
+		return () => window.removeEventListener("storage", handleStorage);
+	}, [location.pathname, navigate]);
+
+	return null;
+}
+
+function App() {
+	return (
+		<>
+			<CrossTabRoomSync />
+			<Routes>
+				<Route path="/" element={<HomePage />} />
+				<Route path="/room/:roomId" element={<ChatPage />} />
+				<Route path="*" element={<Navigate to="/" replace />} />
+			</Routes>
+		</>
 	);
 }
 
@@ -387,10 +517,6 @@ function ChatPage() {
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 createRoot(document.getElementById("root")!).render(
 	<BrowserRouter>
-		<Routes>
-			<Route path="/" element={<HomePage />} />
-			<Route path="/room/:roomId" element={<ChatPage />} />
-			<Route path="*" element={<Navigate to="/" replace />} />
-		</Routes>
+		<App />
 	</BrowserRouter>,
 );
