@@ -10,6 +10,7 @@ export type Participant = {
 	id: string;
 	nickname: string;
 	joinedAt: number;
+	online: boolean;
 };
 
 export type Message =
@@ -39,6 +40,9 @@ export type Message =
 	| {
 			type: "presence_sync";
 			participants: Participant[];
+	  }
+	| {
+			type: "leave";
 	  };
 
 export type RoomInfo = {

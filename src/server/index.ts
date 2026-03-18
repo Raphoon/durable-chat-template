@@ -11,8 +11,6 @@ import { RoomRegistry } from "./room-registry";
 
 export { RoomRegistry };
 
-// 참여자가 0명이 된 뒤 방이 만료될 때까지의 대기 시간 (30분)
-const IDLE_EXPIRY_MS = 30 * 60 * 1000;
 const FALLBACK_NICKNAME = "익명";
 
 type ConnectionState = {
@@ -31,23 +29,28 @@ export class Chat extends Server<Env> {
 	}
 
 	getParticipants(): Participant[] {
-		const uniqueByClientId = new Map<string, Participant>();
+		const dbRows = this.ctx.storage.sql
+			.exec(`SELECT clientId, nickname, joinedAt FROM room_participants`)
+			.toArray() as { clientId: string; nickname: string; joinedAt: number }[];
+
+		const onlineClientIds = new Set<string>();
 		for (const connection of this.getConnections<ConnectionState>()) {
-			const clientId = connection.state?.clientId ?? connection.id;
-			const candidate: Participant = {
-				id: clientId,
-				nickname: connection.state?.nickname ?? FALLBACK_NICKNAME,
-				joinedAt: connection.state?.joinedAt ?? 0,
-			};
-			const existing = uniqueByClientId.get(clientId);
-			if (!existing || candidate.joinedAt < existing.joinedAt) {
-				uniqueByClientId.set(clientId, candidate);
+			if (connection.state?.clientId) {
+				onlineClientIds.add(connection.state.clientId);
 			}
 		}
-		return [...uniqueByClientId.values()].sort((a, b) => {
-			if (a.joinedAt !== b.joinedAt) return a.joinedAt - b.joinedAt;
-			return a.nickname.localeCompare(b.nickname, "ko");
-		});
+
+		return dbRows
+			.map((row) => ({
+				id: row.clientId,
+				nickname: row.nickname,
+				joinedAt: Number(row.joinedAt),
+				online: onlineClientIds.has(row.clientId),
+			}))
+			.sort((a, b) => {
+				if (a.joinedAt !== b.joinedAt) return a.joinedAt - b.joinedAt;
+				return a.nickname.localeCompare(b.nickname, "ko");
+			});
 	}
 
 	broadcastParticipants() {
@@ -57,6 +60,16 @@ export class Chat extends Server<Env> {
 		});
 	}
 
+	hasOtherConnectionWithClientId(clientId: string, excludeConnectionId: string) {
+		for (const connection of this.getConnections<ConnectionState>()) {
+			if (connection.id === excludeConnectionId) continue;
+			if (connection.state?.clientId === clientId) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	getRoomId(): string | null {
 		const rows = this.ctx.storage.sql
 			.exec(`SELECT value FROM meta WHERE key = 'roomId'`)
@@ -64,20 +77,10 @@ export class Chat extends Server<Env> {
 		return rows[0]?.value ?? null;
 	}
 
-	getIdleSince(): number | null {
-		const rows = this.ctx.storage.sql
-			.exec(`SELECT value FROM meta WHERE key = 'idleSince'`)
-			.toArray() as { value: string }[];
-		if (rows.length === 0) return null;
-		const idleSince = Number(rows[0].value);
-		return Number.isFinite(idleSince) ? idleSince : null;
-	}
-
 	async syncRoomPresence() {
 		const roomId = this.getRoomId();
 		if (!roomId) return;
-		const count = this.getParticipants().length;
-		const idleSince = count === 0 ? this.getIdleSince() : null;
+		const count = this.getParticipants().filter((p) => p.online).length;
 
 		try {
 			const registryId = this.env.RoomRegistry.idFromName("global");
@@ -86,7 +89,7 @@ export class Chat extends Server<Env> {
 				new Request(`http://internal/rooms/${roomId}/presence`, {
 					method: "PUT",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ count, idleSince }),
+					body: JSON.stringify({ count }),
 				}),
 			);
 		} catch {
@@ -110,6 +113,9 @@ export class Chat extends Server<Env> {
 		this.ctx.storage.sql.exec(
 			`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`,
 		);
+		this.ctx.storage.sql.exec(
+			`CREATE TABLE IF NOT EXISTS room_participants (clientId TEXT PRIMARY KEY, nickname TEXT NOT NULL, joinedAt INTEGER NOT NULL)`,
+		);
 		this.messages = this.ctx.storage.sql
 			.exec(`SELECT id, user, role, content, createdAt FROM messages`)
 			.toArray()
@@ -122,48 +128,7 @@ export class Chat extends Server<Env> {
 				};
 			});
 
-		// idle 카운트다운이 진행 중이었다면 만료 여부 확인 후 알람 복원
-		const idleSinceRows = this.ctx.storage.sql
-			.exec(`SELECT value FROM meta WHERE key = 'idleSince'`)
-			.toArray() as { value: string }[];
-
-		if (idleSinceRows.length > 0) {
-			const idleSince = Number(idleSinceRows[0].value);
-			const expiresAt = idleSince + IDLE_EXPIRY_MS;
-			if (Date.now() >= expiresAt) {
-				await this.expireRoom();
-				return;
-			}
-			const existingAlarm = await this.ctx.storage.getAlarm();
-			if (existingAlarm === null) {
-				await this.ctx.storage.setAlarm(expiresAt);
-			}
-		}
-
 		await this.syncRoomPresence();
-	}
-
-	async expireRoom() {
-		this.broadcastMessage({ type: "room_expired" });
-
-		const roomIdRows = this.ctx.storage.sql
-			.exec(`SELECT value FROM meta WHERE key = 'roomId'`)
-			.toArray() as { value: string }[];
-		const roomId = roomIdRows[0]?.value;
-
-		if (roomId) {
-			try {
-				const registryId = this.env.RoomRegistry.idFromName("global");
-				const registryStub = this.env.RoomRegistry.get(registryId);
-				await registryStub.fetch(
-					new Request(`http://internal/rooms/${roomId}`, { method: "DELETE" }),
-				);
-			} catch {
-				// Best-effort
-			}
-		}
-
-		await this.ctx.storage.deleteAll();
 	}
 
 	async onConnect(connection: Connection, ctx: ConnectionContext) {
@@ -171,6 +136,10 @@ export class Chat extends Server<Env> {
 		const url = new URL(ctx.request.url);
 		const clientId = url.searchParams.get("clientId")?.trim() || connection.id;
 		const nickname = url.searchParams.get("nickname")?.trim() || FALLBACK_NICKNAME;
+		const isFirstConnectionForClient = !this.hasOtherConnectionWithClientId(
+			clientId,
+			connection.id,
+		);
 
 		connection.setState({
 			clientId,
@@ -183,15 +152,6 @@ export class Chat extends Server<Env> {
 				`INSERT OR IGNORE INTO meta (key, value) VALUES ('roomId', ?)`,
 				roomId,
 			);
-		}
-
-		// 참여자가 들어오면 idle 카운트다운 취소
-		const idleRows = this.ctx.storage.sql
-			.exec(`SELECT value FROM meta WHERE key = 'idleSince'`)
-			.toArray();
-		if (idleRows.length > 0) {
-			this.ctx.storage.sql.exec(`DELETE FROM meta WHERE key = 'idleSince'`);
-			await this.ctx.storage.deleteAlarm();
 		}
 
 		// 기존 메시지 전송
@@ -209,6 +169,28 @@ export class Chat extends Server<Env> {
 
 		// 기존 참여자들에게도 업데이트 전송
 		this.broadcastParticipants();
+
+		if (isFirstConnectionForClient) {
+			const alreadyInRoom = this.ctx.storage.sql
+				.exec(`SELECT clientId FROM room_participants WHERE clientId = ?`, clientId)
+				.toArray().length > 0;
+
+			if (!alreadyInRoom) {
+				this.ctx.storage.sql.exec(
+					`INSERT INTO room_participants (clientId, nickname, joinedAt) VALUES (?, ?, ?)`,
+					clientId, nickname, Date.now(),
+				);
+				const joinMessage: ChatMessage = {
+					id: `join-${Date.now()}-${clientId}`,
+					content: `${nickname}님이 입장하였습니다.`,
+					user: "시스템",
+					role: "assistant",
+					createdAt: Date.now(),
+				};
+				this.broadcastMessage({ type: "add", ...joinMessage }, [connection.id]);
+			}
+		}
+
 		await this.syncRoomPresence();
 	}
 
@@ -237,12 +219,36 @@ export class Chat extends Server<Env> {
 	}
 
 	onRequest(_request: Request): Response {
-		const count = this.getParticipants().length;
+		const count = this.getParticipants().filter((p) => p.online).length;
 		return Response.json({ count });
 	}
 
 	onMessage(connection: Connection, message: WSMessage) {
 		const parsed = JSON.parse(message as string) as Message;
+
+		if (parsed.type === "leave") {
+			const state = connection.state as ConnectionState | undefined;
+			const clientId = state?.clientId;
+			const nickname = state?.nickname ?? FALLBACK_NICKNAME;
+			if (clientId) {
+				this.ctx.storage.sql.exec(
+					`DELETE FROM room_participants WHERE clientId = ?`,
+					clientId,
+				);
+				const leaveMessage: ChatMessage = {
+					id: `leave-${Date.now()}-${clientId}`,
+					content: `${nickname}님이 퇴장하였습니다.`,
+					user: "시스템",
+					role: "assistant",
+					createdAt: Date.now(),
+				};
+				this.saveMessage(leaveMessage);
+				this.broadcastMessage({ type: "add", ...leaveMessage });
+				this.broadcastParticipants();
+			}
+			return;
+		}
+
 		if (parsed.type === "add" || parsed.type === "update") {
 			const normalizedCreatedAt = Number(parsed.createdAt);
 			const normalized: ChatMessage = {
@@ -263,33 +269,14 @@ export class Chat extends Server<Env> {
 		this.broadcast(message);
 	}
 
-	async onClose(_connection: Connection) {
-		// 퇴장 후 남은 참여자 목록을 나머지에게 전송
+	async onClose(connection: Connection) {
+		// DB에서 삭제하지 않음 — 탭을 닫아도 방에서 나간 게 아님
+		// online 여부만 변경되어 참여자 목록에 회색으로 표시됨
 		this.broadcastParticipants();
-
-		// 참여자가 0명이 되면 30분 idle 카운트다운 시작
-		if (this.getParticipants().length === 0) {
-			const now = Date.now();
-			this.ctx.storage.sql.exec(
-				`INSERT INTO meta (key, value) VALUES ('idleSince', ?)
-				 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-				String(now),
-			);
-			await this.ctx.storage.setAlarm(now + IDLE_EXPIRY_MS);
-		}
-
 		await this.syncRoomPresence();
 	}
 
-	async onAlarm() {
-		// 알람 울리기 전에 누군가 재입장했으면 취소
-		if (this.getParticipants().length > 0) {
-			this.ctx.storage.sql.exec(`DELETE FROM meta WHERE key = 'idleSince'`);
-			await this.ctx.storage.deleteAlarm();
-			return;
-		}
-		await this.expireRoom();
-	}
+	async onAlarm() {}
 }
 
 export default {

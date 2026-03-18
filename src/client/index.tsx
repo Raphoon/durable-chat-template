@@ -125,19 +125,48 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 	const navigate = useNavigate();
 
 	useEffect(() => {
-		fetchRooms();
-		const interval = setInterval(fetchRooms, 30_000);
-		const handleVisibilityChange = () => {
-			if (document.visibilityState === "visible") {
-				fetchRooms();
-			}
+		let socket: WebSocket | null = null;
+		let reconnectTimer: number | null = null;
+		let shouldReconnect = true;
+
+		const connect = () => {
+			const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+			socket = new WebSocket(`${protocol}//${window.location.host}/api/rooms/stream`);
+
+			socket.addEventListener("message", (event) => {
+				try {
+					const message = JSON.parse(event.data as string) as {
+						type?: string;
+						rooms?: RoomInfo[];
+					};
+					if (message.type === "rooms_sync" && Array.isArray(message.rooms)) {
+						setRooms(message.rooms);
+					}
+				} catch {
+					// ignore malformed payload
+				}
+			});
+
+			socket.addEventListener("close", () => {
+				socket = null;
+				if (!shouldReconnect) return;
+				reconnectTimer = window.setTimeout(connect, 1500);
+			});
+
+			socket.addEventListener("error", () => {
+				socket?.close();
+			});
 		};
-		window.addEventListener("focus", fetchRooms);
-		document.addEventListener("visibilitychange", handleVisibilityChange);
+
+		fetchRooms();
+		connect();
+
 		return () => {
-			clearInterval(interval);
-			window.removeEventListener("focus", fetchRooms);
-			document.removeEventListener("visibilitychange", handleVisibilityChange);
+			shouldReconnect = false;
+			if (reconnectTimer !== null) {
+				window.clearTimeout(reconnectTimer);
+			}
+			socket?.close();
 		};
 	}, []);
 
@@ -183,6 +212,22 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 		return `${totalMinutes}분 후 만료`;
 	}
 
+	function formatCreatedAgo(createdAt: number) {
+		const diffMs = Math.max(0, Date.now() - createdAt);
+		const minutes = Math.floor(diffMs / 60000);
+		if (minutes < 60) {
+			return `${Math.max(1, minutes)}분 전 생성`;
+		}
+
+		const hours = Math.round(diffMs / 3600000);
+		if (hours < 24) {
+			return `${Math.max(1, hours)}시간 전 생성`;
+		}
+
+		const days = Math.floor(diffMs / 86400000);
+		return `${Math.max(1, days)}일 전 생성`;
+	}
+
 	return (
 		<div className="page-full rooms-page">
 			<div className="card card--wide">
@@ -220,13 +265,29 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 												<span className="room-item-count">
 													<span className="room-item-count-dot" />
 													{room.count}명 접속 중
+													<span className="room-item-sep">·</span>
+													{formatCreatedAgo(room.createdAt)}
+													{room.idleExpiresAt && (
+														<>
+															<span className="room-item-sep">·</span>
+															{formatIdleExpiry(room.idleExpiresAt)}
+														</>
+													)}
 												</span>
 											) : (
 												<span
 													className="room-item-count"
 													style={{ color: "#8b95a7" }}
 												>
-													참여자 없음 · {formatIdleExpiry(room.idleExpiresAt)}
+													참여자 없음
+													<span className="room-item-sep">·</span>
+													{formatCreatedAgo(room.createdAt)}
+													{room.idleExpiresAt && (
+														<>
+															<span className="room-item-sep">·</span>
+															{formatIdleExpiry(room.idleExpiresAt)}
+														</>
+													)}
 												</span>
 											)}
 										</span>
@@ -393,6 +454,7 @@ function ChatPage() {
 	}
 
 	function handleBackToRooms() {
+		socket.send(JSON.stringify({ type: "leave" } satisfies Message));
 		localStorage.removeItem(CURRENT_ROOM_KEY);
 		navigate("/");
 	}
@@ -420,9 +482,9 @@ function ChatPage() {
 						{participants.map((participant) => (
 							<div
 								key={participant.id}
-								className={`participants-item ${participant.id === clientId ? "participants-item--me" : ""}`}
+								className={`participants-item ${participant.id === clientId ? "participants-item--me" : ""} ${!participant.online ? "participants-item--offline" : ""}`}
 							>
-								<span className={`participants-item-dot ${participant.id === clientId ? "participants-item-dot--me" : ""}`} />
+								<span className={`participants-item-dot ${participant.id === clientId ? "participants-item-dot--me" : ""} ${!participant.online ? "participants-item-dot--offline" : ""}`} />
 								{participant.nickname}
 							</div>
 						))}
@@ -432,6 +494,14 @@ function ChatPage() {
 				<div className="chat-main">
 					<div className="chat-messages">
 						{messages.map((message, index) => {
+							if (message.user === "시스템") {
+								return (
+									<div key={message.id} className="system-message">
+										{message.content}
+									</div>
+								);
+							}
+
 							const isMine = message.user === nickname;
 							const prev = messages[index - 1];
 							const next = messages[index + 1];
