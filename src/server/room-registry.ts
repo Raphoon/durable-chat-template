@@ -28,21 +28,29 @@ export class RoomRegistry {
 		if (!columns.some((column) => column.name === "idleSince")) {
 			this.ctx.storage.sql.exec(`ALTER TABLE rooms ADD COLUMN idleSince INTEGER`);
 		}
+		if (!columns.some((column) => column.name === "lastMessageAt")) {
+			this.ctx.storage.sql.exec(`ALTER TABLE rooms ADD COLUMN lastMessageAt INTEGER`);
+		}
+		if (!columns.some((column) => column.name === "capacity")) {
+			this.ctx.storage.sql.exec(`ALTER TABLE rooms ADD COLUMN capacity INTEGER NOT NULL DEFAULT 10`);
+		}
 	}
 
 	private getRooms(): RoomInfo[] {
 		const rows = this.ctx.storage.sql
 			.exec(
-				`SELECT id, name, createdAt, count FROM rooms ORDER BY createdAt DESC`,
+				`SELECT id, name, createdAt, count, capacity, lastMessageAt FROM rooms ORDER BY count DESC, lastMessageAt DESC, createdAt DESC`,
 			)
-			.toArray() as RoomInfo[];
+			.toArray() as { id: string; name: string; createdAt: number; count: number; capacity: number; lastMessageAt: number | null }[];
 
 		return rows.map((room) => ({
 			id: room.id,
 			name: room.name,
-			createdAt: room.createdAt,
+			createdAt: Number(room.createdAt),
 			count: Number(room.count) || 0,
+			capacity: Number(room.capacity) || 10,
 			idleExpiresAt: null,
+			lastMessageAt: room.lastMessageAt ? Number(room.lastMessageAt) : null,
 		}));
 	}
 
@@ -97,25 +105,29 @@ export class RoomRegistry {
 
 		// POST /rooms — create a new room
 		if (request.method === "POST" && parts[0] === "rooms" && parts.length === 1) {
-			const body = (await request.json()) as { name?: string };
+			const body = (await request.json()) as { name?: string; capacity?: number };
 			const name = (body.name ?? "").trim();
 			if (!name) {
 				return new Response("Room name required", { status: 400 });
 			}
+			const capacity = Math.max(1, Math.min(500, Number(body.capacity) || 10));
 			const id = nanoid(8);
 			const createdAt = Date.now();
 			this.ctx.storage.sql.exec(
-				`INSERT INTO rooms (id, name, createdAt, count) VALUES (?, ?, ?, 0)`,
+				`INSERT INTO rooms (id, name, createdAt, count, capacity) VALUES (?, ?, ?, 0, ?)`,
 				id,
 				name,
 				createdAt,
+				capacity,
 			);
 			const room: RoomInfo = {
 				id,
 				name,
 				createdAt,
 				count: 0,
+				capacity,
 				idleExpiresAt: null,
+				lastMessageAt: null,
 			};
 			this.broadcastRooms();
 			return Response.json(room, { status: 201 });
@@ -129,9 +141,16 @@ export class RoomRegistry {
 			parts[2] === "presence"
 		) {
 			const id = parts[1];
-			const body = (await request.json()) as { count?: number };
+			const body = (await request.json()) as { count?: number; lastMessageAt?: number | null };
 			const count = Math.max(0, Number(body.count) || 0);
-			this.ctx.storage.sql.exec(`UPDATE rooms SET count = ? WHERE id = ?`, count, id);
+			if (body.lastMessageAt != null) {
+				this.ctx.storage.sql.exec(
+					`UPDATE rooms SET count = ?, lastMessageAt = ? WHERE id = ?`,
+					count, body.lastMessageAt, id,
+				);
+			} else {
+				this.ctx.storage.sql.exec(`UPDATE rooms SET count = ? WHERE id = ?`, count, id);
+			}
 			this.broadcastRooms();
 			return new Response(null, { status: 204 });
 		}

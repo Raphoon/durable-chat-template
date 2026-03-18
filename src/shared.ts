@@ -43,6 +43,9 @@ export type Message =
 	  }
 	| {
 			type: "leave";
+	  }
+	| {
+			type: "room_full";
 	  };
 
 export type RoomInfo = {
@@ -50,5 +53,7 @@ export type RoomInfo = {
 	name: string;
 	createdAt: number;
 	count: number;
+	capacity: number;
 	idleExpiresAt: number | null;
+	lastMessageAt: number | null;
 };

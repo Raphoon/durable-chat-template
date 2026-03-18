@@ -77,10 +77,26 @@ export class Chat extends Server<Env> {
 		return rows[0]?.value ?? null;
 	}
 
+	getCapacity(): number | null {
+		const rows = this.ctx.storage.sql
+			.exec(`SELECT value FROM meta WHERE key = 'capacity'`)
+			.toArray() as { value: string }[];
+		const val = rows[0]?.value;
+		return val != null ? Number(val) : null;
+	}
+
 	async syncRoomPresence() {
 		const roomId = this.getRoomId();
 		if (!roomId) return;
-		const count = this.getParticipants().filter((p) => p.online).length;
+		const count = this.getParticipants().length;
+
+		let lastMessageAt: number | null = null;
+		for (let i = this.messages.length - 1; i >= 0; i--) {
+			if (this.messages[i].user !== "시스템") {
+				lastMessageAt = this.messages[i].createdAt;
+				break;
+			}
+		}
 
 		try {
 			const registryId = this.env.RoomRegistry.idFromName("global");
@@ -89,7 +105,7 @@ export class Chat extends Server<Env> {
 				new Request(`http://internal/rooms/${roomId}/presence`, {
 					method: "PUT",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ count }),
+					body: JSON.stringify({ count, lastMessageAt }),
 				}),
 			);
 		} catch {
@@ -147,10 +163,18 @@ export class Chat extends Server<Env> {
 			joinedAt: Date.now(),
 		} satisfies ConnectionState);
 
+		const capacityParam = url.searchParams.get("capacity");
+
 		if (roomId) {
 			this.ctx.storage.sql.exec(
 				`INSERT OR IGNORE INTO meta (key, value) VALUES ('roomId', ?)`,
 				roomId,
+			);
+		}
+		if (capacityParam) {
+			this.ctx.storage.sql.exec(
+				`INSERT OR REPLACE INTO meta (key, value) VALUES ('capacity', ?)`,
+				capacityParam,
 			);
 		}
 
@@ -159,21 +183,25 @@ export class Chat extends Server<Env> {
 			JSON.stringify({ type: "all", messages: this.messages } satisfies Message),
 		);
 
-		// 신규 입장자에게 현재 참여자 목록 직접 전송
-		connection.send(
-			JSON.stringify({
-				type: "presence_sync",
-				participants: this.getParticipants(),
-			} satisfies Message),
-		);
-
-		// 기존 참여자들에게도 업데이트 전송
-		this.broadcastParticipants();
-
 		if (isFirstConnectionForClient) {
 			const alreadyInRoom = this.ctx.storage.sql
 				.exec(`SELECT clientId FROM room_participants WHERE clientId = ?`, clientId)
 				.toArray().length > 0;
+
+			// 정원 초과 확인 (기존 참여자 재접속은 허용)
+			if (!alreadyInRoom) {
+				const capacity = this.getCapacity();
+				if (capacity !== null) {
+					const currentCount = this.ctx.storage.sql
+						.exec(`SELECT COUNT(*) as cnt FROM room_participants`)
+						.toArray()[0] as { cnt: number };
+					if (Number(currentCount.cnt) >= capacity) {
+						connection.send(JSON.stringify({ type: "room_full" } satisfies Message));
+						connection.close();
+						return;
+					}
+				}
+			}
 
 			if (!alreadyInRoom) {
 				this.ctx.storage.sql.exec(
@@ -187,9 +215,19 @@ export class Chat extends Server<Env> {
 					role: "assistant",
 					createdAt: Date.now(),
 				};
-				this.broadcastMessage({ type: "add", ...joinMessage }, [connection.id]);
+				this.saveMessage(joinMessage);
+				this.broadcastMessage({ type: "add", ...joinMessage });
 			}
 		}
+
+		// DB insert 이후에 참여자 목록 전송 (신규 입장자 포함)
+		connection.send(
+			JSON.stringify({
+				type: "presence_sync",
+				participants: this.getParticipants(),
+			} satisfies Message),
+		);
+		this.broadcastParticipants();
 
 		await this.syncRoomPresence();
 	}
@@ -263,6 +301,9 @@ export class Chat extends Server<Env> {
 			};
 			this.broadcastMessage({ type: parsed.type, ...normalized });
 			this.saveMessage(normalized);
+			if (parsed.type === "add" && normalized.user !== "시스템") {
+				void this.syncRoomPresence();
+			}
 			return;
 		}
 

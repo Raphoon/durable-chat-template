@@ -366,6 +366,10 @@ body, html {
   color: var(--border);
 }
 
+.room-item-last-message {
+  color: #9ca3af;
+}
+
 /* ─── Section divider ─── */
 
 .section-divider {
@@ -375,22 +379,145 @@ body, html {
 
 /* ─── Create room ─── */
 
-.create-room-title {
+.create-room-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ─── Modal ─── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 24px;
+}
+
+.modal {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+  padding: 32px;
+  width: 100%;
+  max-width: 420px;
+  animation: modal-in 0.18s ease;
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+
+.modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.modal-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.modal-close:hover {
+  background: var(--border);
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.modal-label {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 10px;
+  letter-spacing: 0.02em;
 }
 
-.create-room-row {
+.modal-actions {
   display: flex;
-  gap: 10px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
 }
 
-.create-room-row .input {
+.btn--modal-submit {
+  width: 100%;
+  padding: 12px;
+  font-size: 14px;
+}
+
+/* ─── Capacity stepper ─── */
+
+.capacity-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+  background: var(--card-bg);
+}
+
+.capacity-btn {
+  width: 52px;
+  height: 48px;
+  border: none;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 400;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.capacity-btn:hover:not(:disabled) {
+  background: var(--primary-light);
+  color: var(--primary);
+}
+
+.capacity-btn:disabled {
+  color: var(--disabled-text);
+  cursor: not-allowed;
+}
+
+.capacity-value {
   flex: 1;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  padding: 0 12px;
+  line-height: 48px;
+  border-left: 1.5px solid var(--border);
+  border-right: 1.5px solid var(--border);
+  user-select: none;
 }
 
 /* ─── Chat page ─── */

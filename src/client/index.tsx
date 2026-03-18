@@ -120,7 +120,9 @@ function NicknamePage({ onSave }: { onSave: (name: string) => void }) {
 
 function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChangeNickname: () => void }) {
 	const [rooms, setRooms] = useState<RoomInfo[]>([]);
+	const [showModal, setShowModal] = useState(false);
 	const [newRoomName, setNewRoomName] = useState("");
+	const [newRoomCapacity, setNewRoomCapacity] = useState(4);
 	const [creating, setCreating] = useState(false);
 	const navigate = useNavigate();
 
@@ -182,13 +184,14 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 	async function handleCreateRoom(e: React.FormEvent) {
 		e.preventDefault();
 		const name = newRoomName.trim();
+		const capacity = newRoomCapacity;
 		if (!name) return;
 		setCreating(true);
 		try {
 			const res = await fetch("/api/rooms", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name }),
+				body: JSON.stringify({ name, capacity }),
 			});
 			if (res.ok) {
 				const room: RoomInfo = await res.json();
@@ -196,6 +199,7 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 			}
 		} finally {
 			setCreating(false);
+			setShowModal(false);
 		}
 	}
 
@@ -212,23 +216,23 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 		return `${totalMinutes}분 후 만료`;
 	}
 
-	function formatCreatedAgo(createdAt: number) {
-		const diffMs = Math.max(0, Date.now() - createdAt);
+	function formatLastMessageAgo(lastMessageAt: number | null) {
+		if (!lastMessageAt) return null;
+		const diffMs = Math.max(0, Date.now() - lastMessageAt);
 		const minutes = Math.floor(diffMs / 60000);
 		if (minutes < 60) {
-			return `${Math.max(1, minutes)}분 전 생성`;
+			return `${Math.max(1, minutes)}분 전 대화`;
 		}
-
-		const hours = Math.round(diffMs / 3600000);
+		const hours = Math.floor(diffMs / 3600000);
 		if (hours < 24) {
-			return `${Math.max(1, hours)}시간 전 생성`;
+			return `${hours}시간 전 대화`;
 		}
-
 		const days = Math.floor(diffMs / 86400000);
-		return `${Math.max(1, days)}일 전 생성`;
+		return `${days}일 전 대화`;
 	}
 
 	return (
+		<>
 		<div className="page-full rooms-page">
 			<div className="card card--wide">
 				{/* Header */}
@@ -261,42 +265,32 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 									<div className="room-item-info">
 										<span className="room-item-name">{room.name}</span>
 										<span className="room-item-meta">
-											{room.count > 0 ? (
-												<span className="room-item-count">
-													<span className="room-item-count-dot" />
-													{room.count}명 접속 중
-													<span className="room-item-sep">·</span>
-													{formatCreatedAgo(room.createdAt)}
-													{room.idleExpiresAt && (
-														<>
-															<span className="room-item-sep">·</span>
-															{formatIdleExpiry(room.idleExpiresAt)}
-														</>
-													)}
+											<span className="room-item-count">
+												{room.count > 0 && <span className="room-item-count-dot" />}
+												<span style={{ color: room.count === 0 ? "#8b95a7" : undefined }}>
+													{room.count}명 / {room.capacity}명
 												</span>
-											) : (
-												<span
-													className="room-item-count"
-													style={{ color: "#8b95a7" }}
-												>
-													참여자 없음
-													<span className="room-item-sep">·</span>
-													{formatCreatedAgo(room.createdAt)}
-													{room.idleExpiresAt && (
-														<>
-															<span className="room-item-sep">·</span>
-															{formatIdleExpiry(room.idleExpiresAt)}
-														</>
-													)}
-												</span>
-											)}
+												{formatLastMessageAgo(room.lastMessageAt) && (
+													<>
+														<span className="room-item-sep">·</span>
+														<span className="room-item-last-message">{formatLastMessageAgo(room.lastMessageAt)}</span>
+													</>
+												)}
+												{room.idleExpiresAt && (
+													<>
+														<span className="room-item-sep">·</span>
+														{formatIdleExpiry(room.idleExpiresAt)}
+													</>
+												)}
+											</span>
 										</span>
 									</div>
 									<button
 										className="btn btn--sm btn--join"
 										onClick={() => navigate(`/room/${room.id}`)}
+										disabled={room.count >= room.capacity}
 									>
-										입장
+										{room.count >= room.capacity ? "정원 초과" : "입장"}
 									</button>
 								</div>
 							))
@@ -305,10 +299,25 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 
 					<div className="section-divider" />
 
-					{/* Create room */}
-					<div>
-						<p className="create-room-title">새 채팅방 만들기</p>
-						<form className="create-room-row" onSubmit={handleCreateRoom}>
+					<div className="create-room-footer">
+						<button className="btn btn--sm btn--primary" onClick={() => { setNewRoomName(""); setNewRoomCapacity(4); setShowModal(true); }}>
+							방 만들기
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		{showModal && (
+			<div className="modal-overlay" onClick={() => setShowModal(false)}>
+				<div className="modal" onClick={(e) => e.stopPropagation()}>
+					<div className="modal-header">
+						<h3 className="modal-title">새 채팅방 만들기</h3>
+						<button type="button" className="modal-close" onClick={() => setShowModal(false)}>✕</button>
+					</div>
+					<form onSubmit={handleCreateRoom}>
+						<div className="modal-field">
+							<label className="modal-label">채팅방 제목</label>
 							<input
 								className="input"
 								type="text"
@@ -317,19 +326,37 @@ function RoomListPage({ nickname, onChangeNickname }: { nickname: string; onChan
 								placeholder="방 이름을 입력하세요"
 								autoComplete="off"
 								maxLength={30}
+								autoFocus
 							/>
-							<button
-								type="submit"
-								className="btn btn--sm btn--primary"
-								disabled={!newRoomName.trim() || creating}
-							>
+						</div>
+						<div className="modal-field">
+							<label className="modal-label">최대 정원</label>
+							<div className="capacity-stepper">
+								<button
+									type="button"
+									className="capacity-btn"
+									onClick={() => setNewRoomCapacity((v) => Math.max(1, v - 1))}
+									disabled={newRoomCapacity <= 1}
+								>−</button>
+								<span className="capacity-value">{newRoomCapacity}명</span>
+								<button
+									type="button"
+									className="capacity-btn"
+									onClick={() => setNewRoomCapacity((v) => Math.min(500, v + 1))}
+									disabled={newRoomCapacity >= 500}
+								>+</button>
+							</div>
+						</div>
+						<div className="modal-actions">
+							<button type="submit" className="btn btn--primary btn--modal-submit" disabled={!newRoomName.trim() || creating}>
 								{creating ? "생성 중…" : "만들기"}
 							</button>
-						</form>
-					</div>
+						</div>
+					</form>
 				</div>
 			</div>
-		</div>
+		)}
+		</>
 	);
 }
 
@@ -378,6 +405,7 @@ function ChatPage() {
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [participants, setParticipants] = useState<Participant[]>([]);
 	const [roomName, setRoomName] = useState<string>("");
+	const [roomCapacity, setRoomCapacity] = useState<number | null>(null);
 
 	useEffect(() => {
 		if (!roomId) return;
@@ -389,7 +417,10 @@ function ChatPage() {
 			.then((r) => r.json())
 			.then((rooms: RoomInfo[]) => {
 				const found = rooms.find((r) => r.id === roomId);
-				if (found) setRoomName(found.name);
+				if (found) {
+					setRoomName(found.name);
+					setRoomCapacity(found.capacity);
+				}
 			})
 			.catch(() => {});
 	}, [roomId]);
@@ -408,10 +439,16 @@ function ChatPage() {
 		query: {
 			nickname,
 			clientId,
+			...(roomCapacity !== null ? { capacity: String(roomCapacity) } : {}),
 		},
 		onMessage: (evt) => {
 			const message = JSON.parse(evt.data as string) as Message;
 
+			if (message.type === "room_full") {
+				localStorage.removeItem(CURRENT_ROOM_KEY);
+				navigate("/", { replace: true });
+				return;
+			}
 			if (message.type === "room_expired") {
 				localStorage.removeItem(CURRENT_ROOM_KEY);
 				navigate("/", { replace: true });
